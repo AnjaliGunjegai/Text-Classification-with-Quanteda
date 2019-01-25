@@ -1,0 +1,123 @@
+---
+title: "Spam Classification"
+author: "Anjali Gunjegai"
+date: "23 January 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Many email services today provide spam ???lters that are able to classify emails into spam and non-spam email with high accuracy.
+In this exercise we will classify some emails available from the SpamAssassin public corpus :
+http://spamassassin.apache.org/old/publiccorpus/. 
+As this is text data, it needs cleaning. There are certain common characteristics that we can find in the email body that will help us in classifying the email as "spam". These features are:
+1. URLs: Most of the spam emails will contain some URLs, so the easier way to deal with them is to normalize them. This can be done by replacing the entire URL with the string "httpaddr"
+2. email address: removing this component will keep only the relevant information necessary for classification
+3. Numbers & Currency: All the numbers and currency mentioned in emails are generally indicative of a spam email. replacing the numbers with the string "number" and the currencies with "currency" will help noemalize the data
+4. Punctuations: removing punctuations will allow our model to be more precise
+
+Let's start by importing the data and the required packages and then take a look at the given data
+  
+```{r}
+#install.packages("tm")
+#install.packages("SnowballC")
+
+library(tm)
+library(SnowballC)
+library(dplyr)
+library(caret)
+library(quanteda)
+
+text_data <- read.csv(file = "C:\\Users\\anjal\\OneDrive\\Documents\\SPAM text message 20170820 - Data.csv",header = TRUE,stringsAsFactors = FALSE)
+head(text_data)
+```
+The entire contents of one example spam email can be analysed to find the above mentioned pattern:
+```{r}
+text_data %>%
+  filter(Category == "spam") %>%
+      head(1)
+```
+Randomly shuffling the data
+```{r}
+set.seed(2012)
+text_data<-text_data[sample(nrow(text_data)),] #randomly shuffling the dataset
+```
+
+Creating a corpus of all the emails. A corpus is just like a data frame for the text data. It allows us an easier  access to all the data points( emails). We use the Corpus command for this. We also need to store the corresponding labels of this text, we can do this by using the docvars() command from the quanteda package
+
+```{r}
+email_corpus <- corpus((text_data$Message))
+# storing the label
+docvars(email_corpus) <- text_data$Category
+# Replacing the URLs with httpaddr
+library(stringr)
+email_corpus$documents$texts <- str_replace_all(email_corpus$documents$texts,'(http|https)[^([:blank:]|\\"|<|&|#\n\r)]+',"httpadd")
+
+# Replace email address
+email_corpus$documents$texts <- str_replace_all(email_corpus$documents$texts,"^[[:alnum:].-_]+@[[:alnum:].-]+$","email")
+
+# Replace dollar symbol by the word dollar
+email_corpus$documents$texts <- str_replace_all(email_corpus$documents$texts,"\\$","dollar")
+
+
+```
+
+We can also take a look at the most commonly occuring words in the spam emails
+```{r}
+library(RColorBrewer)
+#subsetting only the spam messages
+spam.plot<-corpus_subset(email_corpus,docvar1=="spam")
+
+#now creating a document-feature matrix using dfm()
+spam.plot<-dfm(spam.plot, tolower = TRUE, remove_punct = TRUE, remove_twitter = TRUE, remove_numbers = TRUE, remove=stopwords("SMART"))
+
+spam.col <- brewer.pal(10, "BrBG")  
+
+textplot_wordcloud(spam.plot, min.freq = 16, color = spam.col)  
+title("Spam Wordcloud", col.main = "grey14")
+```
+
+Let us create a Document- Feature Matrix to convert the corpus to a mathematical matrix format. We will also split the data into training and testing set
+```{r}
+#separating Train and test data
+spam.train<-text_data[1:4458,]
+spam.test<-text_data[4458:nrow(text_data),]
+
+email.dfm <- dfm(email_corpus, 
+               tolower = TRUE, #Lower case conversion
+               stem = TRUE, # Stemming the words
+               removePunct = TRUE, # Remove punctuations 
+               removeTwitter = TRUE, # Remove twitter usernames
+               removeNumbers = TRUE  # Remove numbers
+               )  #generating document freq matrix
+
+# Removing the sparse terms
+email.dfm <- dfm_trim(email.dfm, sparsity = 0.7)  
+# Setting the term frequency according to its prevelance in the document
+#email.dfm <- dfm_tfidf(email.dfm, base = 2, scheme_tf = "prop") 
+
+
+```
+
+Splitting the data into train and test dataset and fitting a Naive Bayes classifier on the text. We will then check the accuracy of the classifier by using a Confusion MAtrix
+
+```{r}
+
+email.dfm.train <- email.dfm[1:4458,]  
+email.dfm.test <- email.dfm[4458:nrow(email.dfm),]  
+email.classifier <- textmodel_nb(email.dfm.train, spam.train$Category,prior = "termfreq")  
+
+
+email.predictions <- data.frame(predict(email.classifier, newdata = email.dfm.test)  )
+conf<- table(email.predictions$predict.email.classifier..newdata...email.dfm.test., spam.test$Category)
+```
+
+```{r}
+library(caret)
+library(e1071)
+confusionMatrix(conf,mode = "everything")
+```
+
+We see an accuracy of 86% based on the Naive Bayes classifier. We could probably improve the accuracy after completing some more feature extractions. But for now, we will stop with this classifier. As a next step, i would like to try SVM with a linear kernal for separating the classes.
